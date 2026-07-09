@@ -1,0 +1,60 @@
+# Dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# Build output
+/.next
+/.next.cache
+/dist
+/build
+/out
+/.turbo
+
+# Logs & diagnostics
+/logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Coverage & test artifacts
+/coverage
+/.nyc_output
+/test-results
+/playwright-report
+/blob-report
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# TypeScript
+*.tsbuildinfo
+
+# Prisma local databases
+prisma/*.db
+prisma/*.db-journal
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Package managers
+.npm
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# Misc temp files
+/tmp
+/temp

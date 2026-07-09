@@ -1,0 +1,147 @@
+name: Deploy via SSM
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      INSTANCE_ID: ${{ secrets.PRODUCTION_INSTANCE_ID }}
+      DEPLOY_SHA: ${{ github.sha }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate SSM managed node
+        run: |
+          set -euo pipefail
+
+          set +e
+          ping_status="$(aws ssm describe-instance-information \
+            --region "$AWS_REGION" \
+            --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+            --query 'InstanceInformationList[0].PingStatus' \
+            --output text 2>&1)"
+          describe_exit=$?
+          set -e
+
+          if [ "$describe_exit" -ne 0 ]; then
+            if printf '%s' "$ping_status" | grep -q "AccessDenied"; then
+              echo "Sem permissão para ssm:DescribeInstanceInformation. Seguindo sem pre-check do managed node."
+              exit 0
+            fi
+
+            printf '%s\n' "$ping_status"
+            exit "$describe_exit"
+          fi
+
+          if [ "$ping_status" != "Online" ]; then
+            echo "Instância $INSTANCE_ID não está Online no SSM. Status: $ping_status"
+            exit 1
+          fi
+
+      - name: Send deploy command
+        id: deploy
+        run: |
+          set -euo pipefail
+
+          parameters="{\"commands\":[\"sudo /opt/command-center/scripts/restart-environment.sh ${DEPLOY_SHA}\"]}"
+
+          command_id="$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy command-center ${DEPLOY_SHA}" \
+            --parameters "$parameters" \
+            --timeout-seconds 3600 \
+            --max-concurrency "1" \
+            --max-errors "0" \
+            --query 'Command.CommandId' \
+            --output text)"
+
+          echo "command_id=$command_id" >> "$GITHUB_OUTPUT"
+          echo "Command ID: $command_id"
+
+      - name: Wait for deploy result
+        run: |
+          set -euo pipefail
+
+          command_id="${{ steps.deploy.outputs.command_id }}"
+          final_status=""
+          can_read_invocation=1
+
+          for attempt in $(seq 1 180); do
+            set +e
+            status="$(aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --command-id "$command_id" \
+              --instance-id "$INSTANCE_ID" \
+              --query 'Status' \
+              --output text 2>&1)"
+            status_exit=$?
+            set -e
+
+            if [ "$status_exit" -ne 0 ]; then
+              if printf '%s' "$status" | grep -q "AccessDenied"; then
+                echo "Sem permissão para ssm:GetCommandInvocation. Deploy disparado sem confirmação remota. Command ID: $command_id"
+                can_read_invocation=0
+                break
+              fi
+
+              printf '%s\n' "$status"
+              exit "$status_exit"
+            fi
+
+            case "$status" in
+              Success)
+                final_status="$status"
+                break
+                ;;
+              Pending|InProgress|Delayed|"")
+                echo "Tentativa $attempt/180: status atual do deploy = ${status:-Pending}"
+                sleep 10
+                ;;
+              Cancelled|TimedOut|Failed|Cancelling|DeliveryTimedOut|ExecutionTimedOut|Undeliverable|Terminated|InvalidPlatform|AccessDenied)
+                final_status="$status"
+                break
+                ;;
+              *)
+                echo "Status inesperado do SSM: $status"
+                final_status="$status"
+                break
+                ;;
+            esac
+          done
+
+          if [ "$can_read_invocation" -eq 0 ]; then
+            exit 0
+          fi
+
+          echo "Status final do deploy: ${final_status:-unknown}"
+
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$command_id" \
+            --instance-id "$INSTANCE_ID" \
+            --query '{Status:Status,StatusDetails:StatusDetails,ResponseCode:ResponseCode,StartedAt:ExecutionStartDateTime,FinishedAt:ExecutionEndDateTime,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+            --output json
+
+          if [ "${final_status:-}" != "Success" ]; then
+            exit 1
+          fi

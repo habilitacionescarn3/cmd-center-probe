@@ -1,0 +1,5 @@
+-- AlterEnum
+ALTER TYPE "Role" ADD VALUE IF NOT EXISTS 'GUEST';
+
+-- AlterTable
+ALTER TABLE "User" ALTER COLUMN "role" SET DEFAULT 'GUEST';

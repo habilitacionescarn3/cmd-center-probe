@@ -1,0 +1,277 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  USER
+  GUEST
+}
+
+enum IncidentStatus {
+  ATIVO
+  SUSPEITA
+  RECUPERADO
+  ARQUIVADO
+}
+
+enum Severity {
+  P1
+  P2
+  P3
+  P4
+}
+
+enum IncidentEventType {
+  OPENED
+  UPDATE
+  MITIGATED
+  RESOLVED
+  RCA
+}
+
+model User {
+  id                 String              @id @default(cuid())
+  name               String?
+  email              String?             @unique
+  emailVerified      DateTime?
+  image              String?
+  passwordHash       String?             @db.Text
+  role               Role                @default(GUEST)
+  isActive           Boolean             @default(true)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  accounts           Account[]
+  sessions           Session[]
+  auditLogs          AuditLog[]
+  reported           Incident[]          @relation("incident_reporter")
+  authoredEvents     IncidentEvent[]     @relation("incident_event_author")
+  maintenanceWindows MaintenanceWindow[]
+
+  @@index([role])
+  @@index([email])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Application {
+  id                 String                @id @default(cuid())
+  name               String
+  slug               String                @unique
+  description        String?
+  owner              String?
+  incidents          IncidentApplication[]
+  slaConfigs         SLAConfig[]
+  maintenanceWindows MaintenanceWindow[]
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  @@index([slug])
+}
+
+model Incident {
+  id              String                @id @default(cuid())
+  title           String
+  description     String
+  sanv2Code       String?               @unique
+  status          IncidentStatus        @default(RECUPERADO)
+  severity        Severity
+  country         String?
+  dayNumber       Int?
+  monthNumber     Int?
+  yearNumber      Int?
+  impact          String?
+  owner           String?
+  solutionType    String?
+  cause           String?
+  resolution      String?
+  produtosOkr     String?
+  coreSystems     String?
+  solver          String?
+  ordersAffected  String?
+  financialImpact String?
+  scope           String?
+  reporterId      String?
+  reporter        User?                 @relation("incident_reporter", fields: [reporterId], references: [id])
+  jiraIssueKey    String?
+  links           Json?
+  startedAt       DateTime
+  firstResponseAt DateTime?
+  mitigatedAt     DateTime?
+  resolvedAt      DateTime?
+  durationMinutes Int?                  @default(0)
+  downtimeMinutes Int?                  @default(0)
+  totalMinutesReported Int?
+  durationHoursReported   Int?
+  durationMinutesReported Int?
+  rca             String?
+  timeline        IncidentEvent[]
+  applications    IncidentApplication[]
+  tags            IncidentTag[]
+  insights        MessageInsight[]
+  archivedAt      DateTime?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  @@index([status])
+  @@index([severity])
+  @@index([startedAt])
+  @@index([resolvedAt])
+}
+
+model IncidentApplication {
+  incidentId    String
+  applicationId String
+  coverage      Float?      @default(1.0)
+  incident      Incident    @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@id([incidentId, applicationId])
+}
+
+model IncidentEvent {
+  id         String            @id @default(cuid())
+  incidentId String
+  incident   Incident          @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  type       IncidentEventType
+  title      String?
+  message    String
+  public     Boolean           @default(true)
+  authorId   String?
+  author     User?             @relation("incident_event_author", fields: [authorId], references: [id], onDelete: SetNull)
+  createdAt  DateTime          @default(now())
+  diff       Json?
+  metadata   Json?
+
+  @@index([incidentId, createdAt])
+}
+
+model IncidentTag {
+  incidentId String
+  tagId      String
+  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([incidentId, tagId])
+}
+
+model Tag {
+  id          String        @id @default(cuid())
+  label       String
+  slug        String        @unique
+  description String?
+  incidents   IncidentTag[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+model Integration {
+  id        String   @id @default(cuid())
+  kind      String
+  config    Json
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model MessageInsight {
+  id         String    @id @default(cuid())
+  source     String
+  raw        Json
+  summary    String
+  sentiment  String?
+  tags       String[]
+  incidentId String?
+  incident   Incident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  createdAt  DateTime  @default(now())
+}
+
+model SLAConfig {
+  id            String      @id @default(cuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  uptimeTarget  Float
+  mttaTargetMin Int?
+  mttrTargetMin Int?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([applicationId])
+}
+
+model MaintenanceWindow {
+  id            String       @id @default(cuid())
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  title         String
+  description   String?
+  startsAt      DateTime
+  endsAt        DateTime
+  recurrence    String?
+  createdById   String?
+  createdBy     User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([startsAt])
+  @@index([endsAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actor     User?    @relation(fields: [actorId], references: [id])
+  action    String
+  entity    String
+  before    Json?
+  after     Json?
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([actorId, createdAt])
+}
